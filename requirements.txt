@@ -1,8 +1,6 @@
 streamlit
+smtplib3
 python-dotenv
-smtplib
-email
-re
 ntplib
 pytz
 requests
