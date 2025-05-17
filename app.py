@@ -187,8 +187,8 @@ def format_brazilian_date(date):
 
 def main():
     st.set_page_config(
-        page_title="Help Web App | Tire suas Dúvidas",
-        page_icon="☁️",
+        page_title="Help Web App: formulário tira dúvidas",
+        page_icon="📧",
         layout="centered",
         initial_sidebar_state="collapsed"
     )
