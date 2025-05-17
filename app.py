@@ -219,7 +219,7 @@ def main():
     if not st.session_state.is_authenticated:
         with st.form("login_form"):
             st.subheader("🔐 Acesso ao Formulário")
-            st.markdown("Digite a senha fornecida pelo preletor, durante o encontro...")
+            st.markdown("Digite a senha fornecida pelo professor, durante o encontro...")
             
             password = st.text_input("Senha:", type="password")
             submit_login = st.form_submit_button("Acessar")
