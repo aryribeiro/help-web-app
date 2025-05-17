@@ -1,4 +1,7 @@
-# Aplicativo de Dúvidas para Cursos
+Obs.: caso o app esteja no modo "sleeping" (dormindo) ao entrar, basta clicar no botão que estará disponível e aguardar, para ativar o mesmo.
+![print](https://github.com/user-attachments/assets/39b6f500-3da4-4b32-a9bb-e537d3fbe2cd)
+
+# Aplicativo tira dúvidas para Cursos
 
 Este é um aplicativo Streamlit que permite aos alunos enviarem dúvidas durante aulas.
 
