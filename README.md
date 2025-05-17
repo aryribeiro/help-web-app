@@ -42,4 +42,5 @@ Este é um aplicativo Streamlit que permite aos alunos enviarem dúvidas durante
 
 Nunca compartilhe seu arquivo `.env` ou coloque suas credenciais em sistemas de controle de versão como o Git.
 
-## Por Ary Ribeiro - aryribeiro@gmail.com
+## Por Ary Ribeiro
+aryribeiro@gmail.com
