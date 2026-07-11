@@ -305,8 +305,8 @@ def email_screen():
     """Tela 1: aluno informa o email para receber o PIN (ou entrar direto se já verificado)."""
     show_flash()
     with st.form("email_form"):
-        st.subheader("🔓 Acesso ao Formulário")
-        st.markdown("Informe seu email para receber um **PIN de acesso**. Depois de confirmar, você fica liberado por **24 horas**.")
+        st.markdown("<h3 style='text-align: center; margin-bottom: 0.2rem;'>🔓 Acesso ao Formulário</h3>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center; color: #475569;'>Informe seu email para receber um <b>PIN de acesso</b>.<br>Depois de confirmar, você fica liberado por <b>24 horas</b>.</p>", unsafe_allow_html=True)
 
         row = st.container(key="email_row")
         with row:
@@ -338,8 +338,8 @@ def pin_screen():
     email = st.session_state.pin_email
 
     with st.form("pin_form"):
-        st.subheader("📩 Confirme seu PIN")
-        st.markdown(f"Digite o PIN de 6 dígitos enviado para **{email}**. Ele vale por 10 minutos.")
+        st.markdown("<h3 style='text-align: center; margin-bottom: 0.2rem;'>📩 Confirme seu PIN</h3>", unsafe_allow_html=True)
+        st.markdown(f"<p style='text-align: center; color: #475569;'>Digite o PIN de 6 dígitos enviado para <b>{email}</b>.<br>Ele vale por 10 minutos.</p>", unsafe_allow_html=True)
 
         row = st.container(key="pin_row")
         with row:
@@ -477,11 +477,12 @@ def main():
     # Enquanto o navegador não responde, usa headers/conexão como fallback
     user_ip = st.session_state.get('user_ip') or get_client_ip()
 
-    # Centralizar com HTML + CSS
+    # Cabeçalho centralizado
     st.markdown("""
-    <div style="text-align: center;">
-        <h1>📧 Help Web App</h1>
-        <p>Use este formulário para enviar suas dúvidas durante os encontros online.<br>
+    <div style="text-align: center; padding-bottom: 0.8rem;">
+        <h1 style="margin-bottom: 0.2rem; letter-spacing: -0.5px;">📧 Help Web App</h1>
+        <p style="color: #64748b; font-size: 1.02rem; margin-top: 0;">
+        Use este formulário para enviar suas dúvidas durante os encontros online.<br>
         Suas questões serão respondidas por email, no momento correto.</p>
     </div>
     """, unsafe_allow_html=True)
@@ -512,16 +513,39 @@ def main():
 if __name__ == "__main__":
     main()
 
-# Estilo personalizado - Remoção de elementos da interface do Streamlit
+# Estilo personalizado - visual moderno + remoção de elementos do Streamlit
 st.markdown("""
 <style>
-    .main {
-        background-color: #ffffff;
+    /* Fundo com gradiente sutil */
+    .stApp {
+        background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
         color: #333333;
     }
     .block-container {
         padding-top: 1rem;
         padding-bottom: 0rem;
+    }
+    /* Formulários como cards modernos e centralizados */
+    div[data-testid="stForm"] {
+        background: #ffffff;
+        border: 1px solid #e5e9f0;
+        border-radius: 16px;
+        padding: 1.8rem 2rem;
+        box-shadow: 0 6px 24px rgba(15, 23, 42, 0.06);
+        max-width: 620px;
+        margin: 0 auto;
+    }
+    /* Remove a faixa decorativa colorida do topo */
+    [data-testid="stDecoration"] {
+        display: none !important;
+    }
+    /* Campos e botões arredondados */
+    div[data-testid="stForm"] div[data-baseweb="input"] {
+        border-radius: 10px;
+    }
+    div[data-testid="stForm"] button {
+        border-radius: 10px;
+        font-weight: 600;
     }
     /* Esconde completamente todos os elementos da barra padrão do Streamlit */
     header {display: none !important;}
@@ -558,11 +582,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Informações de contato
+# Assinatura
 st.markdown("""
-<hr>
-<div style="text-align: center;">
-    <h4>Help Web App: formulário tira dúvidas.</h4>
-    <p>Por Ary Ribeiro. Contato via email: <a href="mailto:aryribeiro@gmail.com">aryribeiro@gmail.com</a></p>
+<hr style="border: none; border-top: 1px solid #e5e9f0; margin: 1.2rem 0 0.8rem 0;">
+<div style="text-align: center; color: #64748b;">
+    <p><em>por <a href="https://www.linkedin.com/in/aryribeiro" target="_blank" rel="noopener"
+    style="text-decoration: none; color: inherit;"><strong>Ary Ribeiro</strong></a></em></p>
 </div>
 """, unsafe_allow_html=True)
