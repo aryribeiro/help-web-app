@@ -80,11 +80,25 @@ def generate_pin():
     return f"{secrets.randbelow(1000000):06d}"
 
 # ---------------- Utilitários ----------------
+LOOPBACK_IPS = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
+
+def _pick_client_ip(headers, fallback_ip):
+    """Escolhe o IP real do aluno: primeiro o X-Forwarded-For (preenchido pelo
+    proxy reverso do Streamlit Cloud), depois X-Real-Ip e, por fim, a conexão
+    direta. Endereços de loopback são do próprio proxy e não valem como IP."""
+    forwarded = headers.get("X-Forwarded-For") or headers.get("X-Real-Ip") or ""
+    for candidate in forwarded.split(","):
+        candidate = candidate.strip()
+        if candidate and candidate not in LOOPBACK_IPS:
+            return candidate
+    if fallback_ip and fallback_ip not in LOOPBACK_IPS:
+        return fallback_ip
+    return "IP não disponível"
+
 def get_client_ip():
-    """Obtém o IP do usuário a partir da conexão com o app (Streamlit >= 1.45)."""
+    """Obtém o IP do aluno, mesmo com o app atrás de proxy (Streamlit >= 1.45)."""
     try:
-        ip = st.context.ip_address
-        return ip if ip else "IP não disponível"
+        return _pick_client_ip(st.context.headers, st.context.ip_address)
     except Exception:
         return "IP não disponível"
 
