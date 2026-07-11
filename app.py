@@ -9,6 +9,7 @@ import os
 import mimetypes
 from dotenv import load_dotenv
 import re
+import ipaddress
 import secrets
 import sqlite3
 import time
@@ -80,19 +81,35 @@ def generate_pin():
     return f"{secrets.randbelow(1000000):06d}"
 
 # ---------------- Utilitários ----------------
-LOOPBACK_IPS = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
+def _public_ip(value):
+    """Retorna o IP público normalizado, ou None se o valor não for um IP
+    público (descarta loopback e redes privadas como 192.168.x.x/10.x.x.x
+    da infraestrutura do Streamlit Cloud)."""
+    try:
+        ip = ipaddress.ip_address(value)
+        # Converte IPv4 mapeado em IPv6 (ex.: ::ffff:177.10.0.1) para IPv4 puro
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        return str(ip) if ip.is_global else None
+    except ValueError:
+        return None
 
 def _pick_client_ip(headers, fallback_ip):
-    """Escolhe o IP real do aluno: primeiro o X-Forwarded-For (preenchido pelo
+    """Escolhe o IP real do aluno: varre o X-Forwarded-For (preenchido pelo
     proxy reverso do Streamlit Cloud), depois X-Real-Ip e, por fim, a conexão
-    direta. Endereços de loopback são do próprio proxy e não valem como IP."""
-    forwarded = headers.get("X-Forwarded-For") or headers.get("X-Real-Ip") or ""
-    for candidate in forwarded.split(","):
-        candidate = candidate.strip()
-        if candidate and candidate not in LOOPBACK_IPS:
-            return candidate
-    if fallback_ip and fallback_ip not in LOOPBACK_IPS:
-        return fallback_ip
+    direta — aceitando apenas o primeiro IP público encontrado."""
+    candidates = []
+    for header in ("X-Forwarded-For", "X-Real-Ip"):
+        value = headers.get(header)
+        if value:
+            candidates.extend(part.strip() for part in value.split(","))
+    if fallback_ip:
+        candidates.append(fallback_ip)
+
+    for candidate in candidates:
+        public = _public_ip(candidate)
+        if public:
+            return public
     return "IP não disponível"
 
 def get_client_ip():
