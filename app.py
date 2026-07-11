@@ -9,120 +9,100 @@ import os
 import mimetypes
 from dotenv import load_dotenv
 import re
-import random
-import string
+import secrets
+import sqlite3
+import time
 import datetime
-import locale
 import ntplib
 import pytz
-from time import ctime
-import requests
 
 # Carregar variáveis de ambiente
 load_dotenv()
 
-def get_public_ip():
-    """Obtém o IP público do usuário."""
-    try:
-        response = requests.get('https://api.ipify.org?format=json', timeout=5)
-        if response.status_code == 200:
-            return response.json()['ip']
-        return "IP não disponível"
-    except Exception as e:
-        return "IP não disponível"
+# ---------------- Controle de acesso por PIN ----------------
+DB_PATH = os.getenv("HELP_DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "students.db"))
 
-def generate_captcha():
-    """Gera um CAPTCHA simples de operação matemática."""
-    operations = ['+', '-', '*']
-    operation = random.choice(operations)
-    
-    if operation == '+':
-        num1 = random.randint(1, 20)
-        num2 = random.randint(1, 20)
-        answer = num1 + num2
-    elif operation == '-':
-        num1 = random.randint(10, 30)
-        num2 = random.randint(1, 9)
-        answer = num1 - num2
-    else:  # multiplicação
-        num1 = random.randint(1, 10)
-        num2 = random.randint(1, 10)
-        answer = num1 * num2
-    
-    captcha_text = f"{num1} {operation} {num2} = ?"
-    return captcha_text, answer
+PIN_VALIDITY_SECONDS = 10 * 60        # PIN expira em 10 minutos
+ACCESS_VALIDITY_SECONDS = 24 * 3600   # acesso liberado por 24 horas
+RESEND_INTERVAL_SECONDS = 60          # intervalo mínimo entre envios de PIN
+MAX_PIN_ATTEMPTS = 5                  # tentativas erradas antes de exigir novo PIN
+
+def _db(query, params=(), fetch=False):
+    """Executa uma query no SQLite, com commit e fechamento garantidos."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS students (
+                email TEXT PRIMARY KEY,
+                pin TEXT,
+                pin_expires_at REAL DEFAULT 0,
+                pin_sent_at REAL DEFAULT 0,
+                pin_attempts INTEGER DEFAULT 0,
+                verified_until REAL DEFAULT 0
+            )
+        """)
+        cur = conn.execute(query, params)
+        row = cur.fetchone() if fetch else None
+        conn.commit()
+        return row
+    finally:
+        conn.close()
+
+def get_student(email):
+    return _db("SELECT * FROM students WHERE email = ?", (email,), fetch=True)
+
+def save_pin(email, pin):
+    now = time.time()
+    _db("""
+        INSERT INTO students (email, pin, pin_expires_at, pin_sent_at, pin_attempts)
+        VALUES (?, ?, ?, ?, 0)
+        ON CONFLICT(email) DO UPDATE SET
+            pin = excluded.pin,
+            pin_expires_at = excluded.pin_expires_at,
+            pin_sent_at = excluded.pin_sent_at,
+            pin_attempts = 0
+    """, (email, pin, now + PIN_VALIDITY_SECONDS, now))
+
+def register_failed_attempt(email):
+    _db("UPDATE students SET pin_attempts = pin_attempts + 1 WHERE email = ?", (email,))
+
+def grant_access(email):
+    _db("UPDATE students SET verified_until = ?, pin = NULL WHERE email = ?",
+        (time.time() + ACCESS_VALIDITY_SECONDS, email))
+
+def has_valid_access(email):
+    row = get_student(email)
+    return bool(row and row["verified_until"] > time.time())
+
+def generate_pin():
+    """Gera um PIN numérico de 6 dígitos criptograficamente seguro."""
+    return f"{secrets.randbelow(1000000):06d}"
+
+# ---------------- Utilitários ----------------
+def get_client_ip():
+    """Obtém o IP do usuário a partir da conexão com o app (Streamlit >= 1.45)."""
+    try:
+        ip = st.context.ip_address
+        return ip if ip else "IP não disponível"
+    except Exception:
+        return "IP não disponível"
 
 def is_valid_email(email):
     """Verifica se o email é válido."""
     pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
     return re.match(pattern, email) is not None
 
-def send_email(name, email, question, date_time=None, uploaded_file=None, ip_address=None):
-    """Envia email com a dúvida do aluno e anexo opcional."""
+def smtp_send(message):
+    """Autentica no Gmail e envia a mensagem. Retorna True em caso de sucesso."""
     sender_email = os.getenv("EMAIL_USER")
     sender_password = os.getenv("EMAIL_PASSWORD")
-    recipient_email = os.getenv("RECIPIENT_EMAIL")
-    
-    # Cria mensagem
-    message = MIMEMultipart()
-    message["From"] = sender_email
-    message["To"] = recipient_email
-    message["Subject"] = f"Mentoria AWS - Nova Dúvida de {name}"
-    
-    # Corpo do email
-    body = f"""
-    CONFIRA ABAIXO A MENSAGEM
-    
-    Nome: {name}
-    Email: {email}
-    
-    Dúvida: 
-    {question}
-    """
-    # Adiciona data e hora no rodapé do email, se fornecido
-    if date_time:
-        body += f"""
-    
-    ---
-    Enviado: {date_time}"""
-    
-    # Adiciona IP público, se disponível
-    if ip_address:
-        body += f"""
-    IP: {ip_address}"""
-    
-    message.attach(MIMEText(body, "plain"))
-    
-    # Adiciona anexo, se fornecido
-    if uploaded_file is not None:
-        file_data = uploaded_file.getvalue()
-        file_name = uploaded_file.name
-        
-        # Detecta o tipo MIME do arquivo
-        content_type, encoding = mimetypes.guess_type(file_name)
-        if content_type is None:
-            content_type = 'application/octet-stream'
-        
-        main_type, sub_type = content_type.split('/', 1)
-        
-        # Cria o anexo apropriado baseado no tipo de arquivo
-        if main_type == 'text':
-            attachment = MIMEText(file_data.decode('utf-8'), _subtype=sub_type)
-        elif main_type == 'image':
-            attachment = MIMEImage(file_data, _subtype=sub_type)
-        elif main_type == 'audio':
-            attachment = MIMEAudio(file_data, _subtype=sub_type)
-        elif main_type == 'application' and sub_type == 'pdf':
-            attachment = MIMEApplication(file_data, _subtype=sub_type)
-        else:
-            attachment = MIMEApplication(file_data)
-            
-        # Adiciona cabeçalho com nome do arquivo
-        attachment.add_header('Content-Disposition', 'attachment', filename=file_name)
-        message.attach(attachment)
-    
+
+    if not sender_email or not sender_password:
+        st.error("Configuração de email incompleta. Defina EMAIL_USER e EMAIL_PASSWORD no arquivo .env.")
+        return False
+
     try:
-        # Conectar ao servidor SMTP
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(sender_email, sender_password)
             server.send_message(message)
@@ -131,59 +111,293 @@ def send_email(name, email, question, date_time=None, uploaded_file=None, ip_add
         st.error(f"Erro ao enviar email: {str(e)}")
         return False
 
-def get_ntp_time():
-    """Obtém a hora atual de um servidor NTP público."""
+def send_pin_email(recipient, pin):
+    """Envia o PIN de acesso para o email do aluno."""
+    message = MIMEMultipart()
+    message["From"] = os.getenv("EMAIL_USER")
+    message["To"] = recipient
+    message["Subject"] = "Seu PIN de acesso - Help Web App"
+
+    body = f"""
+    Olá!
+
+    Seu PIN de acesso ao formulário de dúvidas é: {pin}
+
+    Ele é válido por 10 minutos. Após confirmar, seu acesso
+    fica liberado por 24 horas.
+
+    Se você não solicitou este código, ignore este email.
+    """
+    message.attach(MIMEText(body, "plain"))
+    return smtp_send(message)
+
+def send_email(name, email, question, date_time=None, uploaded_file=None, ip_address=None):
+    """Envia email com a dúvida do aluno e anexo opcional."""
+    recipient_email = os.getenv("RECIPIENT_EMAIL")
+
+    if not recipient_email:
+        st.error("Configuração de email incompleta. Defina RECIPIENT_EMAIL no arquivo .env.")
+        return False
+
+    # Cria mensagem
+    message = MIMEMultipart()
+    message["From"] = os.getenv("EMAIL_USER")
+    message["To"] = recipient_email
+    message["Subject"] = f"Mentoria AWS - Nova Dúvida de {name}"
+
+    # Corpo do email
+    body = f"""
+    CONFIRA ABAIXO A MENSAGEM
+
+    Nome: {name}
+    Email: {email} (verificado por PIN)
+
+    Dúvida:
+    {question}
+    """
+    # Adiciona data e hora no rodapé do email, se fornecido
+    if date_time:
+        body += f"""
+
+    ---
+    Enviado: {date_time}"""
+
+    # Adiciona IP público, se disponível
+    if ip_address:
+        body += f"""
+    IP: {ip_address}"""
+
+    message.attach(MIMEText(body, "plain"))
+
+    # Adiciona anexo, se fornecido
+    if uploaded_file is not None:
+        file_data = uploaded_file.getvalue()
+        file_name = uploaded_file.name
+
+        # Detecta o tipo MIME do arquivo
+        content_type, _ = mimetypes.guess_type(file_name)
+        if content_type is None:
+            content_type = 'application/octet-stream'
+
+        main_type, sub_type = content_type.split('/', 1)
+
+        # Cria o anexo apropriado baseado no tipo de arquivo
+        if main_type == 'image':
+            attachment = MIMEImage(file_data, _subtype=sub_type)
+        elif main_type == 'audio':
+            attachment = MIMEAudio(file_data, _subtype=sub_type)
+        elif main_type == 'application' and sub_type == 'pdf':
+            attachment = MIMEApplication(file_data, _subtype=sub_type)
+        else:
+            attachment = MIMEApplication(file_data)
+
+        # Adiciona cabeçalho com nome do arquivo
+        attachment.add_header('Content-Disposition', 'attachment', filename=file_name)
+        message.attach(attachment)
+
+    return smtp_send(message)
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_ntp_offset():
+    """Obtém a diferença entre o relógio local e o servidor NTP brasileiro.
+    Cacheada por 1 hora para não bloquear o app a cada interação."""
     try:
         c = ntplib.NTPClient()
-        # Usando o pool NTP brasileiro
         response = c.request('pool.ntp.br', timeout=5)
-        # Converte o tempo NTP para datetime
-        ntp_time = datetime.datetime.fromtimestamp(response.tx_time, pytz.timezone('America/Sao_Paulo'))
-        return ntp_time
-    except Exception as e:
-        # Em caso de falha na conexão com o servidor NTP, usa o horário local
-        st.warning(f"Não foi possível sincronizar com o servidor NTP. Usando horário local. Erro: {e}")
-        return datetime.datetime.now(pytz.timezone('America/Sao_Paulo'))
+        return response.offset
+    except Exception:
+        # Sem NTP, usa o relógio local (offset zero)
+        return 0.0
+
+def get_brazil_time():
+    """Hora atual do Brasil, corrigida pelo offset NTP cacheado."""
+    now = datetime.datetime.now(pytz.timezone('America/Sao_Paulo'))
+    return now + datetime.timedelta(seconds=get_ntp_offset())
+
+MESES = {
+    1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril',
+    5: 'Maio', 6: 'Junho', 7: 'Julho', 8: 'Agosto',
+    9: 'Setembro', 10: 'Outubro', 11: 'Novembro', 12: 'Dezembro'
+}
+DIAS_SEMANA = [
+    'Segunda-feira', 'Terça-feira', 'Quarta-feira',
+    'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo'
+]
 
 def format_brazilian_date(date):
     """Formata a data por extenso no formato brasileiro."""
-    # Configurar o locale para português do Brasil
-    try:
-        locale.setlocale(locale.LC_TIME, 'pt_BR.UTF-8')
-    except locale.Error:
-        try:
-            locale.setlocale(locale.LC_TIME, 'portuguese_brazil')
-        except locale.Error:
-            try:
-                locale.setlocale(locale.LC_TIME, 'Portuguese_Brazil')
-            except locale.Error:
-                # Fallback para formato manual se o locale não estiver disponível
-                meses = {
-                    1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril',
-                    5: 'Maio', 6: 'Junho', 7: 'Julho', 8: 'Agosto',
-                    9: 'Setembro', 10: 'Outubro', 11: 'Novembro', 12: 'Dezembro'
-                }
-                dia_semana = [
-                    'Segunda-feira', 'Terça-feira', 'Quarta-feira', 
-                    'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo'
-                ]
-                return f"{dia_semana[date.weekday()]}, {date.day} de {meses[date.month]} de {date.year}, {date.hour:02d}:{date.minute:02d}"
-    
-    # Tenta usar o locale para formatar a data
-    try:
-        return date.strftime("%A, %d de %B de %Y, %H:%M")
-    except:
-        # Se falhar, usa o formato manual
-        meses = {
-            1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril',
-            5: 'Maio', 6: 'Junho', 7: 'Julho', 8: 'Agosto',
-            9: 'Setembro', 10: 'Outubro', 11: 'Novembro', 12: 'Dezembro'
-        }
-        dia_semana = [
-            'Segunda-feira', 'Terça-feira', 'Quarta-feira', 
-            'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo'
-        ]
-        return f"{dia_semana[date.weekday()]}, {date.day} de {meses[date.month]} de {date.year}, {date.hour:02d}:{date.minute:02d}"
+    return f"{DIAS_SEMANA[date.weekday()]}, {date.day:02d} de {MESES[date.month]} de {date.year}, {date.hour:02d}:{date.minute:02d}"
+
+# ---------------- Telas ----------------
+def show_flash():
+    """Exibe mensagens definidas antes de um st.rerun()."""
+    if 'flash_error' in st.session_state:
+        st.error(st.session_state.pop('flash_error'))
+    if 'flash_info' in st.session_state:
+        st.info(st.session_state.pop('flash_info'))
+    if 'flash_success' in st.session_state:
+        st.success(st.session_state.pop('flash_success'))
+
+def request_pin(email):
+    """Gera, salva e envia um novo PIN. Retorna True para avançar à tela de PIN."""
+    row = get_student(email)
+    now = time.time()
+
+    # Limite de reenvio: evita bombardear a caixa de entrada do aluno
+    if row and now - row["pin_sent_at"] < RESEND_INTERVAL_SECONDS:
+        wait = int(RESEND_INTERVAL_SECONDS - (now - row["pin_sent_at"]))
+        st.session_state.flash_error = f"Um PIN já foi enviado há pouco. Aguarde {wait} segundo(s) para pedir outro."
+        return True  # segue para a tela de PIN: o código anterior continua válido
+
+    pin = generate_pin()
+    if send_pin_email(email, pin):
+        save_pin(email, pin)
+        st.session_state.flash_info = f"📩 Enviamos um PIN de 6 dígitos para **{email}**. Confira sua caixa de entrada (e a pasta de spam)."
+        return True
+    return False
+
+def email_screen():
+    """Tela 1: aluno informa o email para receber o PIN (ou entrar direto se já verificado)."""
+    show_flash()
+    with st.form("email_form"):
+        st.subheader("🔓 Acesso ao Formulário")
+        st.markdown("Informe seu email para receber um **PIN de acesso**. Depois de confirmar, você fica liberado por **24 horas**.")
+
+        email = st.text_input("Seu email")
+        submitted = st.form_submit_button("Receber PIN", type="primary")
+
+        if submitted:
+            email = email.strip().lower()
+            if not email or not is_valid_email(email):
+                st.error("Por favor, informe um email válido.")
+            elif has_valid_access(email):
+                # Já verificado nas últimas 24h: entra direto, sem novo PIN
+                st.session_state.auth_email = email
+                st.session_state.flash_success = "✅ Você já está liberado! Pode enviar suas dúvidas."
+                st.rerun()
+            else:
+                with st.spinner("Enviando PIN..."):
+                    ok = request_pin(email)
+                if ok:
+                    st.session_state.pin_email = email
+                    st.rerun()
+
+def pin_screen():
+    """Tela 2: aluno confirma o PIN recebido por email."""
+    show_flash()
+    email = st.session_state.pin_email
+
+    with st.form("pin_form"):
+        st.subheader("📩 Confirme seu PIN")
+        st.markdown(f"Digite o PIN de 6 dígitos enviado para **{email}**. Ele vale por 10 minutos.")
+
+        pin_input = st.text_input("PIN", max_chars=6)
+        submitted = st.form_submit_button("Confirmar", type="primary")
+
+        if submitted:
+            row = get_student(email)
+            now = time.time()
+            pin_clean = pin_input.strip()
+
+            if not row or not row["pin"]:
+                st.error("Nenhum PIN ativo para este email. Clique em 'Reenviar PIN'.")
+            elif row["pin_attempts"] >= MAX_PIN_ATTEMPTS:
+                st.error("Muitas tentativas erradas. Clique em 'Reenviar PIN' para receber um novo código.")
+            elif now > row["pin_expires_at"]:
+                st.error("Este PIN expirou. Clique em 'Reenviar PIN' para receber um novo código.")
+            elif not pin_clean or not secrets.compare_digest(pin_clean, row["pin"]):
+                register_failed_attempt(email)
+                restantes = MAX_PIN_ATTEMPTS - row["pin_attempts"] - 1
+                if restantes > 0:
+                    st.error(f"PIN incorreto. Você ainda tem {restantes} tentativa(s).")
+                else:
+                    st.error("PIN incorreto. Tentativas esgotadas — clique em 'Reenviar PIN'.")
+            else:
+                grant_access(email)
+                st.session_state.auth_email = email
+                st.session_state.pin_email = None
+                st.session_state.flash_success = "✅ Acesso liberado por 24 horas! Agora é só enviar sua dúvida."
+                st.rerun()
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Reenviar PIN", use_container_width=True):
+            request_pin(email)
+            st.rerun()
+    with col2:
+        if st.button("Usar outro email", use_container_width=True):
+            st.session_state.pin_email = None
+            st.rerun()
+
+def question_screen(formatted_date, user_ip):
+    """Tela 3: formulário de dúvidas (email já verificado)."""
+    show_flash()
+    email = st.session_state.auth_email
+
+    col1, col2 = st.columns([5, 1])
+    with col1:
+        st.markdown(f"<small>Enviando como <b>{email}</b></small>", unsafe_allow_html=True)
+    with col2:
+        if st.button("Sair"):
+            st.session_state.auth_email = None
+            st.session_state.form_submitted = False
+            st.rerun()
+
+    # Verifica se o formulário já foi enviado com sucesso
+    if st.session_state.form_submitted:
+        st.success("✅ Sua dúvida foi enviada!")
+        if st.button("Enviar outra dúvida"):
+            st.session_state.form_submitted = False
+            st.rerun()
+        return
+
+    with st.form("question_form"):
+        name = st.text_input("Nome completo", value=st.session_state.get('student_name', ''))
+        question = st.text_area("Descreva sua dúvida")
+
+        # Adiciona o campo para upload de arquivo
+        st.markdown("#### 📂 Anexo (opcional)")
+        st.markdown("Envie imagens, documentos, áudio e/ou vídeo, que ajude a explicar sua dúvida (máximo 30 MB)")
+        uploaded_file = st.file_uploader("Selecione um arquivo", type=["png", "jpg", "jpeg", "pdf", "docx", "mp3", "mp4"])
+
+        # Mostra prévia do arquivo se for uma imagem
+        if uploaded_file is not None:
+            file_details = {"Filename": uploaded_file.name, "FileType": uploaded_file.type, "Size": f"{uploaded_file.size / (1024*1024):.2f} MB"}
+
+            # Verifica o tamanho do arquivo
+            if uploaded_file.size > 30 * 1024 * 1024:  # 30 MB em bytes
+                st.warning("⚠️ O arquivo excede o limite de 30 MB. Por favor, escolha um arquivo menor.")
+            else:
+                st.write(f"**Arquivo selecionado:** {file_details['Filename']} ({file_details['Size']})")
+
+                # Exibe prévia para imagens
+                if uploaded_file.type.startswith('image/'):
+                    st.image(uploaded_file, caption=uploaded_file.name, use_container_width=True)
+                elif uploaded_file.type == 'application/pdf':
+                    st.write("PDF selecionado (sem prévia)")
+                elif uploaded_file.type.startswith('audio/'):
+                    st.audio(uploaded_file, format=uploaded_file.type)
+                elif uploaded_file.type.startswith('video/'):
+                    st.video(uploaded_file)
+
+        submitted = st.form_submit_button("Enviar Dúvida", type="primary")
+
+        if submitted:
+            if not name:
+                st.error("Por favor, informe seu nome.")
+            elif not question:
+                st.error("Por favor, descreva sua dúvida.")
+            elif uploaded_file is not None and uploaded_file.size > 30 * 1024 * 1024:
+                st.error("O arquivo excede o limite de 30 MB. Por favor, escolha um arquivo menor.")
+            else:
+                with st.spinner("Enviando sua dúvida..."):
+                    success = send_email(name, email, question, formatted_date, uploaded_file, user_ip)
+
+                if success:
+                    # Lembra o nome para a próxima dúvida e vai à confirmação
+                    st.session_state.student_name = name
+                    st.session_state.form_submitted = True
+                    st.rerun()
 
 def main():
     st.set_page_config(
@@ -192,15 +406,14 @@ def main():
         layout="centered",
         initial_sidebar_state="collapsed"
     )
-    
-    # Obtém a data e hora atual do Brasil via servidor NTP
-    current_time = get_ntp_time()
+
+    # Obtém a data e hora atual do Brasil (offset NTP cacheado)
+    current_time = get_brazil_time()
     formatted_date = format_brazilian_date(current_time)
-    
-    # Obtém o IP público do usuário
-    if 'user_ip' not in st.session_state:
-        st.session_state.user_ip = get_public_ip()
-    
+
+    # Obtém o IP do aluno a partir da conexão
+    user_ip = get_client_ip()
+
     # Centralizar com HTML + CSS
     st.markdown("""
     <div style="text-align: center;">
@@ -209,146 +422,29 @@ def main():
         Suas questões serão respondidas por email, no momento correto.</p>
     </div>
     """, unsafe_allow_html=True)
-    
-    # Inicializa o estado de autenticação
-    if 'is_authenticated' not in st.session_state:
-        st.session_state.is_authenticated = False
-        st.session_state.form_submitted = False  # Inicializa form_submitted
-    
-    # Formulário de login
-    if not st.session_state.is_authenticated:
-        with st.form("login_form"):
-            st.subheader("🔐 Acesso ao Formulário")
-            st.markdown("Digite a senha fornecida pelo professor, durante o encontro...")
-            
-            password = st.text_input("Senha:", type="password")
-            submit_login = st.form_submit_button("Acessar")
-            
-            if submit_login:
-                form_password = os.getenv("FORM_PASSWORD")
-                if password == form_password:
-                    st.session_state.is_authenticated = True
-                    st.rerun()
-                else:
-                    st.error("Senha incorreta: tente novamente!")
-    
-    # Inicializa variáveis de sessão para o CAPTCHA se autenticado
-    elif st.session_state.is_authenticated:
-        if 'captcha_text' not in st.session_state:
-            captcha_text, captcha_answer = generate_captcha()
-            st.session_state.captcha_text = captcha_text
-            st.session_state.captcha_answer = captcha_answer
-        
-        # Botão para sair
-        col1, col2 = st.columns([5, 1])
-        with col2:
-            if st.button("Sair"):
-                st.session_state.is_authenticated = False
-                st.session_state.form_submitted = False  # Reseta form_submitted ao sair
-                if 'captcha_text' in st.session_state:
-                    del st.session_state.captcha_text
-                if 'captcha_answer' in st.session_state:
-                    del st.session_state.captcha_answer
-                st.rerun()
-        
-        # Verifica se o formulário já foi enviado com sucesso
-        if st.session_state.form_submitted:
-            st.success("✅ Sua dúvida foi enviada!")
-            if st.button("Preencher novamente"):
-                st.session_state.form_submitted = False
-                st.rerun()
-        else:
-            with st.form("question_form"):
-                name = st.text_input("Nome completo")
-                email = st.text_input("Seu email")
-                question = st.text_area("Descreva sua dúvida")
-                
-                # Adiciona o campo para upload de arquivo
-                st.markdown("#### 📂 Anexo (opcional)")
-                st.markdown("Envie imagens, documentos, áudio e/ou vídeo, que ajude a explicar sua dúvida (máximo 30 MB)")
-                uploaded_file = st.file_uploader("Selecione um arquivo", type=["png", "jpg", "pdf", "docx", "mp3", "mp4"])
-                
-                # Mostra prévia do arquivo se for uma imagem
-                if uploaded_file is not None:
-                    file_details = {"Filename": uploaded_file.name, "FileType": uploaded_file.type, "Size": f"{uploaded_file.size / (1024*1024):.2f} MB"}
-                    
-                    # Verifica o tamanho do arquivo
-                    if uploaded_file.size > 30 * 1024 * 1024:  # 30 MB em bytes
-                        st.warning("⚠️ O arquivo excede o limite de 30 MB. Por favor, escolha um arquivo menor.")
-                    else:
-                        st.write(f"**Arquivo selecionado:** {file_details['Filename']} ({file_details['Size']} MB)")
-                        
-                        # Exibe prévia para imagens
-                        if uploaded_file.type.startswith('image/'):
-                            st.image(uploaded_file, caption=uploaded_file.name, use_container_width=True)
-                        elif uploaded_file.type == 'application/pdf':
-                            st.write("PDF selecionado (sem prévia)")
-                        elif uploaded_file.type.startswith('audio/'):
-                            st.audio(uploaded_file, format=uploaded_file.type)
-                        elif uploaded_file.type.startswith('video/'):
-                            st.video(uploaded_file)
-                
-                # CAPTCHA
-                st.markdown("#### 🔐 Verificação de Segurança")
-                st.markdown(f"**{st.session_state.captcha_text}**")
-                captcha_response = st.text_input("Resolva a operação matemática acima")
-                
-                submitted = st.form_submit_button("Enviar Dúvida")
-                
-                if submitted:
-                    if not name:
-                        st.error("Por favor, informe seu nome.")
-                    elif not email:
-                        st.error("Por favor, informe seu email.")
-                    elif not is_valid_email(email):
-                        st.error("Por favor, informe um email válido.")
-                    elif not question:
-                        st.error("Por favor, descreva sua dúvida.")
-                    elif uploaded_file is not None and uploaded_file.size > 30 * 1024 * 1024:
-                        st.error("O arquivo excede o limite de 30 MB. Por favor, escolha um arquivo menor.")
-                    elif not captcha_response:
-                        st.error("Por favor, resolva o CAPTCHA.")
-                    else:
-                        # Verifica o CAPTCHA
-                        try:
-                            captcha_user_answer = int(captcha_response.strip())
-                            if captcha_user_answer != st.session_state.captcha_answer:
-                                st.error("CAPTCHA incorreto. Por favor, tente novamente.")
-                                # Gera novo CAPTCHA
-                                captcha_text, captcha_answer = generate_captcha()
-                                st.session_state.captcha_text = captcha_text
-                                st.session_state.captcha_answer = captcha_answer
-                            else:
-                                # CAPTCHA correto, enviar email
-                                with st.spinner("Enviando sua dúvida..."):
-                                    # Passa a data formatada e o IP para a função de envio de email
-                                    success = send_email(name, email, question, formatted_date, uploaded_file, st.session_state.user_ip)
-                                    
-                                if success:
-                                    # Gera novo CAPTCHA para próximo uso
-                                    captcha_text, captcha_answer = generate_captcha()
-                                    st.session_state.captcha_text = captcha_text
-                                    st.session_state.captcha_answer = captcha_answer
-                                    
-                                    # Limpar formulário
-                                    st.session_state.form_submitted = True
-                                    
-                                    # Mostra mensagem de confirmação
-                                    st.success("✅ Dúvida enviada! Por favor aguarde.")
-                        except ValueError:
-                            st.error("Por favor, digite um número válido para o CAPTCHA.")
-                            # Gera novo CAPTCHA
-                            captcha_text, captcha_answer = generate_captcha()
-                            st.session_state.captcha_text = captcha_text
-                            st.session_state.captcha_answer = captcha_answer
 
-    # Obtém a data e hora atual do Brasil via servidor NTP
-    current_time = get_ntp_time()
-    formatted_date = format_brazilian_date(current_time)
-    
-    # Adiciona rodapé com data, hora e IP
-    
-    st.markdown(f"<div style='text-align: center; color: black; font-size: 14px;'>{formatted_date}<br>IP: {st.session_state.user_ip}</div>", unsafe_allow_html=True)
+    # Inicializa o estado da autenticação
+    if 'auth_email' not in st.session_state:
+        st.session_state.auth_email = None   # email com acesso liberado nesta sessão
+    if 'pin_email' not in st.session_state:
+        st.session_state.pin_email = None    # email aguardando confirmação de PIN
+    if 'form_submitted' not in st.session_state:
+        st.session_state.form_submitted = False
+
+    # Revalida o acesso: as 24 horas podem ter expirado durante a sessão
+    if st.session_state.auth_email and not has_valid_access(st.session_state.auth_email):
+        st.session_state.auth_email = None
+        st.session_state.flash_error = "Seu acesso de 24 horas expirou. Informe seu email para receber um novo PIN."
+
+    if st.session_state.auth_email:
+        question_screen(formatted_date, user_ip)
+    elif st.session_state.pin_email:
+        pin_screen()
+    else:
+        email_screen()
+
+    # Adiciona rodapé com data, hora e IP (reutiliza os valores calculados no início)
+    st.markdown(f"<div style='text-align: center; font-size: 14px;'>{formatted_date}<br>IP: {user_ip}</div>", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()

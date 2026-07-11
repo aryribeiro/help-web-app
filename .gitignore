@@ -1,2 +1,5 @@
 .env
 old.py
+students.db
+*.db
+__pycache__/
