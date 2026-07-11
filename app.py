@@ -16,6 +16,7 @@ import time
 import datetime
 import ntplib
 import pytz
+from streamlit_js_eval import streamlit_js_eval
 
 # Carregar variáveis de ambiente
 load_dotenv()
@@ -113,11 +114,24 @@ def _pick_client_ip(headers, fallback_ip):
     return "IP não disponível"
 
 def get_client_ip():
-    """Obtém o IP do aluno, mesmo com o app atrás de proxy (Streamlit >= 1.45)."""
+    """Obtém o IP do aluno pelos headers/conexão (fallback: o proxy do
+    Streamlit Cloud não repassa o IP público, então normalmente falha lá)."""
     try:
         return _pick_client_ip(st.context.headers, st.context.ip_address)
     except Exception:
         return "IP não disponível"
+
+def get_browser_public_ip():
+    """Obtém o IP público direto do NAVEGADOR do aluno via JS — funciona
+    mesmo atrás do proxy do Streamlit Cloud, que esconde o IP do servidor.
+    Retorna None no primeiro render (o valor chega num rerun seguinte)."""
+    try:
+        return streamlit_js_eval(
+            js_expressions="fetch('https://api.ipify.org').then(r => r.text()).catch(() => null)",
+            key="browser_public_ip",
+        )
+    except Exception:
+        return None
 
 def is_valid_email(email):
     """Verifica se o email é válido."""
@@ -452,8 +466,16 @@ def main():
     current_time = get_brazil_time()
     formatted_date = format_brazilian_date(current_time)
 
-    # Obtém o IP do aluno a partir da conexão
-    user_ip = get_client_ip()
+    # IP público capturado no navegador do aluno (o proxy do Streamlit Cloud
+    # não repassa o IP; o valor chega via JS após o primeiro render)
+    browser_ip = get_browser_public_ip()
+    if browser_ip:
+        normalized = _public_ip(str(browser_ip).strip())
+        if normalized:
+            st.session_state.user_ip = normalized
+
+    # Enquanto o navegador não responde, usa headers/conexão como fallback
+    user_ip = st.session_state.get('user_ip') or get_client_ip()
 
     # Centralizar com HTML + CSS
     st.markdown("""
@@ -471,23 +493,6 @@ def main():
         st.session_state.pin_email = None    # email aguardando confirmação de PIN
     if 'form_submitted' not in st.session_state:
         st.session_state.form_submitted = False
-
-    # Modo debug temporário: acesse /?debug_ip=1 para ver os headers de rede
-    # que o proxy entrega ao app (sem expor cookies/valores sensíveis)
-    if st.query_params.get("debug_ip"):
-        with st.expander("🔎 Debug de IP (temporário)", expanded=True):
-            try:
-                headers = st.context.headers.to_dict()
-            except Exception:
-                headers = {}
-            relevantes = {k: v for k, v in headers.items()
-                          if any(t in k.lower() for t in ("ip", "forward", "via", "client", "real", "cf-", "true-"))}
-            st.write("Headers relevantes:", relevantes if relevantes else "nenhum encontrado")
-            st.write("Nomes de todos os headers recebidos:", sorted(headers.keys()))
-            try:
-                st.write("st.context.ip_address:", st.context.ip_address)
-            except Exception as e:
-                st.write("st.context.ip_address indisponível:", str(e))
 
     # Revalida o acesso: as 24 horas podem ter expirado durante a sessão
     if st.session_state.auth_email and not has_valid_access(st.session_state.auth_email):
@@ -536,6 +541,10 @@ st.markdown("""
     .element-container {
         margin-top: 0 !important;
         margin-bottom: 0 !important;
+    }
+    /* Esconde o iframe invisível do componente que captura o IP no navegador */
+    iframe[title="streamlit_js_eval.streamlit_js_eval"] {
+        display: none !important;
     }
     /* Campo + botão lado a lado, sem empilhar no mobile */
     .st-key-email_row [data-testid="stHorizontalBlock"],
