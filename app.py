@@ -297,7 +297,7 @@ def request_pin(email):
     pin = generate_pin()
     if send_pin_email(email, pin):
         save_pin(email, pin)
-        st.session_state.flash_info = f"📩 Enviamos um PIN de 6 dígitos para **{email}**. Confira sua caixa de entrada (e a pasta de spam)."
+        # Sem mensagem de confirmação: a tela do PIN já informa o email de destino
         return True
     return False
 
