@@ -294,8 +294,13 @@ def email_screen():
         st.subheader("🔓 Acesso ao Formulário")
         st.markdown("Informe seu email para receber um **PIN de acesso**. Depois de confirmar, você fica liberado por **24 horas**.")
 
-        email = st.text_input("Seu email")
-        submitted = st.form_submit_button("Receber PIN", type="primary")
+        row = st.container(key="email_row")
+        with row:
+            col1, col2 = st.columns([1, 1], vertical_alignment="bottom")
+            with col1:
+                email = st.text_input("Seu email")
+            with col2:
+                submitted = st.form_submit_button("Receber PIN", type="primary")
 
         if submitted:
             email = email.strip().lower()
@@ -322,8 +327,13 @@ def pin_screen():
         st.subheader("📩 Confirme seu PIN")
         st.markdown(f"Digite o PIN de 6 dígitos enviado para **{email}**. Ele vale por 10 minutos.")
 
-        pin_input = st.text_input("PIN", max_chars=6)
-        submitted = st.form_submit_button("Confirmar", type="primary")
+        row = st.container(key="pin_row")
+        with row:
+            col1, col2 = st.columns([1, 1], vertical_alignment="bottom")
+            with col1:
+                pin_input = st.text_input("PIN", max_chars=6)
+            with col2:
+                submitted = st.form_submit_button("Confirmar", type="primary")
 
         if submitted:
             row = get_student(email)
@@ -462,6 +472,23 @@ def main():
     if 'form_submitted' not in st.session_state:
         st.session_state.form_submitted = False
 
+    # Modo debug temporário: acesse /?debug_ip=1 para ver os headers de rede
+    # que o proxy entrega ao app (sem expor cookies/valores sensíveis)
+    if st.query_params.get("debug_ip"):
+        with st.expander("🔎 Debug de IP (temporário)", expanded=True):
+            try:
+                headers = st.context.headers.to_dict()
+            except Exception:
+                headers = {}
+            relevantes = {k: v for k, v in headers.items()
+                          if any(t in k.lower() for t in ("ip", "forward", "via", "client", "real", "cf-", "true-"))}
+            st.write("Headers relevantes:", relevantes if relevantes else "nenhum encontrado")
+            st.write("Nomes de todos os headers recebidos:", sorted(headers.keys()))
+            try:
+                st.write("st.context.ip_address:", st.context.ip_address)
+            except Exception as e:
+                st.write("st.context.ip_address indisponível:", str(e))
+
     # Revalida o acesso: as 24 horas podem ter expirado durante a sessão
     if st.session_state.auth_email and not has_valid_access(st.session_state.auth_email):
         st.session_state.auth_email = None
@@ -509,6 +536,15 @@ st.markdown("""
     .element-container {
         margin-top: 0 !important;
         margin-bottom: 0 !important;
+    }
+    /* Campo + botão lado a lado, sem empilhar no mobile */
+    .st-key-email_row [data-testid="stHorizontalBlock"],
+    .st-key-pin_row [data-testid="stHorizontalBlock"] {
+        flex-wrap: nowrap !important;
+    }
+    .st-key-email_row [data-testid="stColumn"],
+    .st-key-pin_row [data-testid="stColumn"] {
+        min-width: 0 !important;
     }
 </style>
 """, unsafe_allow_html=True)
