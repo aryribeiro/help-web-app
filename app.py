@@ -310,7 +310,8 @@ def email_screen():
 
         row = st.container(key="email_row")
         with row:
-            col1, col2 = st.columns([1, 1], vertical_alignment="bottom")
+            # Espaçadores laterais centralizam o conjunto campo + botão no card
+            _, col1, col2, _ = st.columns([0.7, 2, 1, 0.7], vertical_alignment="bottom")
             with col1:
                 email = st.text_input("Seu email")
             with col2:
@@ -343,7 +344,8 @@ def pin_screen():
 
         row = st.container(key="pin_row")
         with row:
-            col1, col2 = st.columns([1, 1], vertical_alignment="bottom")
+            # Espaçadores laterais centralizam o conjunto campo + botão no card
+            _, col1, col2, _ = st.columns([0.7, 2, 1, 0.7], vertical_alignment="bottom")
             with col1:
                 pin_input = st.text_input("PIN", max_chars=6)
             with col2:
@@ -547,6 +549,11 @@ st.markdown("""
         border-radius: 10px;
         font-weight: 600;
     }
+    /* Botões de envio centralizados dentro dos formulários */
+    div[data-testid="stForm"] div[data-testid="stFormSubmitButton"] {
+        display: flex;
+        justify-content: center;
+    }
     /* Esconde completamente todos os elementos da barra padrão do Streamlit */
     header {display: none !important;}
     footer {display: none !important;}
@@ -578,6 +585,30 @@ st.markdown("""
     .st-key-email_row [data-testid="stColumn"],
     .st-key-pin_row [data-testid="stColumn"] {
         min-width: 0 !important;
+    }
+    /* Texto dos botões nunca quebra em várias linhas */
+    .st-key-email_row button p, .st-key-pin_row button p {
+        white-space: nowrap !important;
+    }
+    /* No mobile, esconde os espaçadores laterais e deixa campo + botão
+       ocuparem toda a largura do card */
+    @media (max-width: 640px) {
+        .st-key-email_row [data-testid="stColumn"]:first-child,
+        .st-key-email_row [data-testid="stColumn"]:last-child,
+        .st-key-pin_row [data-testid="stColumn"]:first-child,
+        .st-key-pin_row [data-testid="stColumn"]:last-child {
+            display: none !important;
+        }
+        .st-key-email_row [data-testid="stColumn"]:nth-child(2),
+        .st-key-pin_row [data-testid="stColumn"]:nth-child(2) {
+            flex: 2 1 0 !important;
+            width: auto !important;
+        }
+        .st-key-email_row [data-testid="stColumn"]:nth-child(3),
+        .st-key-pin_row [data-testid="stColumn"]:nth-child(3) {
+            flex: 1 1 auto !important;
+            width: auto !important;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
