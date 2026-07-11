@@ -376,15 +376,18 @@ def pin_screen():
                 st.session_state.flash_success = "✅ Acesso liberado por 24 horas! Agora é só enviar sua dúvida."
                 st.rerun()
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Reenviar PIN", use_container_width=True):
-            request_pin(email)
-            st.rerun()
-    with col2:
-        if st.button("Usar outro email", use_container_width=True):
-            st.session_state.pin_email = None
-            st.rerun()
+    # Ações alinhadas à mesma largura do card do formulário
+    actions = st.container(key="pin_actions")
+    with actions:
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Reenviar PIN", use_container_width=True):
+                request_pin(email)
+                st.rerun()
+        with col2:
+            if st.button("Usar outro email", use_container_width=True):
+                st.session_state.pin_email = None
+                st.rerun()
 
 def question_screen(formatted_date, user_ip):
     """Tela 3: formulário de dúvidas (email já verificado)."""
@@ -553,6 +556,14 @@ st.markdown("""
     div[data-testid="stForm"] div[data-testid="stFormSubmitButton"] {
         display: flex;
         justify-content: center;
+    }
+    /* Ações abaixo do card (Reenviar PIN / Usar outro email) na largura do card */
+    .st-key-pin_actions {
+        max-width: 620px;
+        margin: 0.6rem auto 0 auto;
+    }
+    .st-key-pin_actions button {
+        border-radius: 10px;
     }
     /* Esconde completamente todos os elementos da barra padrão do Streamlit */
     header {display: none !important;}
